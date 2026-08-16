@@ -133,6 +133,40 @@ public:
     bool binning_y_given_;
 
     /**
+     * Basler PixelBeyond scaling factor, applied during startup. The factor is a
+     * DIVISOR: 1.0 keeps full resolution, 2.0 halves each dimension. Unlike ROI this
+     * keeps the whole field of view, so it is the lever for trading resolution against
+     * bandwidth without cropping. Only present on ace 2 Pro and later.
+     */
+    double scaling_factor_;
+    bool scaling_factor_given_;
+
+    /**
+     * Region of interest applied during startup, in sensor pixels. This CROPS - field
+     * of view is the price. All four values must be given together for the ROI to be
+     * applied; a partially specified ROI is ignored.
+     *
+     * Setting these here rather than through the set_roi service after launch matters:
+     * geometry is applied before the first frame is published (no window in which the
+     * image size and camera_info disagree) and it is re-applied on every node start,
+     * so a respawned driver comes back at the configured resolution instead of
+     * silently reverting to whatever the startup user set holds.
+     */
+    int roi_width_;
+    int roi_height_;
+    int roi_offset_x_;
+    int roi_offset_y_;
+    bool roi_given_;
+
+    /**
+     * GigE bandwidth cap in bytes/s, applied during startup. Must be at least
+     * frame_rate * frame_bytes or the camera silently throttles. Sized from the
+     * geometry above, hence applied after it.
+     */
+    int device_link_throughput_limit_;
+    bool device_link_throughput_limit_given_;
+
+    /**
      * Factor that describes the image downsampling to speed up the exposure
      * search to find the desired brightness.
      * The smallest window height is img_rows/downsampling_factor

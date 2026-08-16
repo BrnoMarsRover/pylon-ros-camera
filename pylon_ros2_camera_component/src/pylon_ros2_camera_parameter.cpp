@@ -43,6 +43,15 @@ PylonROS2CameraParameter::PylonROS2CameraParameter() :
     binning_y_(1),
     binning_x_given_(false),
     binning_y_given_(false),
+    scaling_factor_(0.0),
+    scaling_factor_given_(false),
+    roi_width_(-1),
+    roi_height_(-1),
+    roi_offset_x_(0),
+    roi_offset_y_(0),
+    roi_given_(false),
+    device_link_throughput_limit_(0),
+    device_link_throughput_limit_given_(false),
     downsampling_factor_exposure_search_(1),
     exposure_(10000.0),
     exposure_given_(false),
@@ -186,6 +195,86 @@ void PylonROS2CameraParameter::readFromRosParameterServer(rclcpp::Node& nh)
     }
 
     this->binning_y_ = static_cast<size_t>(binning_y);
+
+    // scaling factor (Basler PixelBeyond)
+    //
+    // Sentinel-based "given" flags from here on, deliberately unlike binning above:
+    // binning_*_given_ is set to true unconditionally, so the driver forces binning to 1
+    // at every startup even when the parameter was never specified. Geometry parameters
+    // must not behave that way - an unset value has to mean "leave the camera alone",
+    // otherwise merely launching the driver would reset a resolution someone configured
+    // in the camera's user set.
+    RCLCPP_DEBUG(LOGGER, "---> scaling_factor");
+
+    if (!nh.has_parameter("scaling_factor"))
+    {
+        nh.declare_parameter<double>("scaling_factor", 0.0);  // 0.0 = not given
+    }
+
+    nh.get_parameter("scaling_factor", this->scaling_factor_);
+    this->scaling_factor_given_ = (this->scaling_factor_ > 0.0);
+
+    if (this->scaling_factor_given_ && this->scaling_factor_ < 1.0)
+    {
+        RCLCPP_WARN_STREAM(LOGGER, "scaling_factor is a DIVISOR, not a multiplier: ("
+                << this->scaling_factor_ << ") is below 1.0 and would be clamped. "
+                << "Use 1.0 for full resolution, 2.0 for half. Ignoring it.");
+        this->scaling_factor_given_ = false;
+    }
+
+    // region of interest
+    RCLCPP_DEBUG(LOGGER, "---> roi");
+
+    if (!nh.has_parameter("roi/width"))
+    {
+        nh.declare_parameter<int>("roi/width", -1);           // -1 = not given
+    }
+    if (!nh.has_parameter("roi/height"))
+    {
+        nh.declare_parameter<int>("roi/height", -1);
+    }
+    if (!nh.has_parameter("roi/offset_x"))
+    {
+        nh.declare_parameter<int>("roi/offset_x", 0);
+    }
+    if (!nh.has_parameter("roi/offset_y"))
+    {
+        nh.declare_parameter<int>("roi/offset_y", 0);
+    }
+
+    nh.get_parameter("roi/width", this->roi_width_);
+    nh.get_parameter("roi/height", this->roi_height_);
+    nh.get_parameter("roi/offset_x", this->roi_offset_x_);
+    nh.get_parameter("roi/offset_y", this->roi_offset_y_);
+
+    // Width and height must BOTH be positive. Offsets legitimately default to 0, so
+    // they cannot act as the sentinel; a half-specified ROI is rejected outright rather
+    // than silently completed from the sensor maximum.
+    this->roi_given_ = (this->roi_width_ > 0 && this->roi_height_ > 0);
+
+    if (!this->roi_given_ && (this->roi_width_ > 0 || this->roi_height_ > 0))
+    {
+        RCLCPP_WARN_STREAM(LOGGER, "Incomplete roi: width (" << this->roi_width_
+                << ") and height (" << this->roi_height_ << ") must both be positive. "
+                << "Ignoring the roi entirely.");
+    }
+
+    if (!this->roi_given_ && (this->roi_offset_x_ != 0 || this->roi_offset_y_ != 0))
+    {
+        RCLCPP_WARN_STREAM(LOGGER, "roi/offset_x or roi/offset_y set without roi/width "
+                << "and roi/height. Offsets alone do nothing - ignoring them.");
+    }
+
+    // device link throughput limit
+    RCLCPP_DEBUG(LOGGER, "---> device_link_throughput_limit");
+
+    if (!nh.has_parameter("device_link_throughput_limit"))
+    {
+        nh.declare_parameter<int>("device_link_throughput_limit", 0);  // 0 = not given
+    }
+
+    nh.get_parameter("device_link_throughput_limit", this->device_link_throughput_limit_);
+    this->device_link_throughput_limit_given_ = (this->device_link_throughput_limit_ > 0);
 
     // downsampling_factor_exposure_search
     RCLCPP_DEBUG(LOGGER, "---> downsampling_factor_exposure_search");

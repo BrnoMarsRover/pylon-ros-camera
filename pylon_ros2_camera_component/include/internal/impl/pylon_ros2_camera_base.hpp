@@ -2776,7 +2776,15 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setScalingFactor(const float& val
     // a stale buffer size.
     try
     {
-        if ( !GenApi::IsAvailable(cam_->BslScalingFactor) )
+        // Probe the GATE, not the gated value. BslScalingFactor is gated by
+        // BslScalingEnable: while scaling is switched off the factor node reads NA, so
+        // testing IsAvailable(BslScalingFactor) up front reports a camera that fully
+        // supports PixelBeyond as "not supporting" it - and because this is also the
+        // only path that can switch scaling back ON, that verdict is self-fulfilling.
+        // That one-way door is exactly what happened on Freya: a call written to UNDO
+        // scaling turned it off, and every call afterwards bailed out here.
+        const bool has_scaling_enable = GenApi::IsAvailable(cam_->BslScalingEnable);
+        if ( !has_scaling_enable && !GenApi::IsAvailable(cam_->BslScalingFactor) )
         {
             RCLCPP_WARN_STREAM(LOGGER_BASE, "Camera does not support scaling (PixelBeyond). Will keep the current settings.");
             return "The connected Camera not supporting this feature";
@@ -2789,9 +2797,20 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setScalingFactor(const float& val
         // flag leaves the old factor in place, which keeps WidthMax (and therefore the
         // image) small. So: enable, write the factor, then switch the feature off again
         // if the factor turned out to be a no-op.
-        if ( GenApi::IsAvailable(cam_->BslScalingEnable) )
+        if ( has_scaling_enable )
         {
             cam_->BslScalingEnable.SetValue(true);
+        }
+
+        // Only now, with the gate open, can the factor node be judged. Note the early
+        // return has to restart acquisition - StopGrabbing() above already ran, and
+        // leaving without grabbingStarting() would silently kill the stream.
+        if ( !GenApi::IsAvailable(cam_->BslScalingFactor) )
+        {
+            RCLCPP_WARN_STREAM(LOGGER_BASE, "Camera exposes BslScalingEnable but no BslScalingFactor. "
+                    << "Will keep the current settings.");
+            grabbingStarting();
+            return "The connected Camera not supporting this feature";
         }
 
         double factor_to_set = value;
@@ -2865,14 +2884,17 @@ float PylonROS2CameraImpl<CameraTraitT>::getScalingFactor()
 {
     try
     {
+        // Check the gate first. With scaling switched off BslScalingFactor reads NA, so
+        // testing it first would log an error on a camera that merely has the feature
+        // idle. Report 1.0 in that case, so callers can always read the value as
+        // "divide the full resolution by this".
+        if ( GenApi::IsAvailable(cam_->BslScalingEnable) && !cam_->BslScalingEnable.GetValue() )
+        {
+            return 1.0;
+        }
+
         if ( GenApi::IsAvailable(cam_->BslScalingFactor) )
         {
-            // Report 1.0 when the feature exists but is switched off, so callers can
-            // always read the value as "divide the full resolution by this".
-            if ( GenApi::IsAvailable(cam_->BslScalingEnable) && !cam_->BslScalingEnable.GetValue() )
-            {
-                return 1.0;
-            }
             return static_cast<float>(cam_->BslScalingFactor.GetValue());
         }
         else
