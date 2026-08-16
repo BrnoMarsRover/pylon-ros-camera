@@ -395,7 +395,7 @@ bool PylonROS2CameraImpl<CameraTraitT>::startGrabbing(const PylonROS2CameraParam
         grab_strategy_ = parameters.grab_strategy_;
 
         // ------------------------------------------------------------------
-        // Startup geometry: scaling -> ROI -> bandwidth cap.
+        // Startup geometry: scaling -> ROI -> frame rate -> bandwidth cap -> pacing.
         //
         // This runs HERE, with the camera open but not yet grabbing, because that is the
         // state Basler requires for Width/Height/Offset writes, and because img_rows_ /
@@ -405,8 +405,9 @@ bool PylonROS2CameraImpl<CameraTraitT>::startGrabbing(const PylonROS2CameraParam
         // the image and camera_info disagree), and a respawned node comes back at the
         // configured resolution instead of whatever the startup user set happens to hold.
         //
-        // Order matters: scaling changes WidthMax, so it has to precede the ROI, and the
-        // bandwidth cap is sized from the geometry, so it comes last.
+        // Order matters: scaling changes WidthMax so it has to precede the ROI; the ROI
+        // determines the achievable frame rate so it precedes that; and the bandwidth cap
+        // is sized from rate x frame bytes, so it comes after both.
         if (parameters.scaling_factor_given_)
         {
             setScalingFactor(static_cast<float>(parameters.scaling_factor_));
@@ -435,6 +436,19 @@ bool PylonROS2CameraImpl<CameraTraitT>::startGrabbing(const PylonROS2CameraParam
                         << " at offset (" << parameters.roi_offset_x_ << ", "
                         << parameters.roi_offset_y_ << ")). Keeping the current geometry.");
             }
+        }
+
+        if (parameters.acquisition_frame_rate_given_)
+        {
+            // Set the rate on the CAMERA, after the geometry that determines the
+            // achievable maximum and before the cap that is derived from it.
+            //
+            // This is distinct from parameters.frame_rate_, which only paces the driver's
+            // grab loop. Without writing the camera's own AcquisitionFrameRate, lowering
+            // the ROS-side rate makes the driver retrieve more slowly than the camera
+            // transmits, the stream buffers fill, and frames start arriving incomplete -
+            // so the bandwidth saving never materialises and image quality gets worse.
+            setAcquisitionFrameRate(static_cast<float>(parameters.acquisition_frame_rate_));
         }
 
         if (parameters.device_link_throughput_limit_given_)

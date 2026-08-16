@@ -159,6 +159,19 @@ public:
     bool roi_given_;
 
     /**
+     * Frame rate written to the CAMERA (AcquisitionFrameRate) during startup, in Hz.
+     * 0.0 means not given.
+     *
+     * Deliberately separate from frame_rate_ below, which only paces the driver's own
+     * grab loop. Without this the camera keeps whatever rate its user set holds, so
+     * lowering frame_rate_ alone makes the driver retrieve more slowly than the camera
+     * transmits - the buffers fill and frames arrive incomplete, which is the opposite
+     * of the intended effect.
+     */
+    double acquisition_frame_rate_;
+    bool acquisition_frame_rate_given_;
+
+    /**
      * GigE bandwidth cap in bytes/s, applied during startup. Must be at least
      * frame_rate * frame_bytes or the camera silently throttles. Sized from the
      * geometry above, hence applied after it.

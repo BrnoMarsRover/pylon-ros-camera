@@ -50,6 +50,8 @@ PylonROS2CameraParameter::PylonROS2CameraParameter() :
     roi_offset_x_(0),
     roi_offset_y_(0),
     roi_given_(false),
+    acquisition_frame_rate_(0.0),
+    acquisition_frame_rate_given_(false),
     device_link_throughput_limit_(0),
     device_link_throughput_limit_given_(false),
     downsampling_factor_exposure_search_(1),
@@ -264,6 +266,17 @@ void PylonROS2CameraParameter::readFromRosParameterServer(rclcpp::Node& nh)
         RCLCPP_WARN_STREAM(LOGGER, "roi/offset_x or roi/offset_y set without roi/width "
                 << "and roi/height. Offsets alone do nothing - ignoring them.");
     }
+
+    // acquisition frame rate (written to the camera, not just the grab loop)
+    RCLCPP_DEBUG(LOGGER, "---> acquisition_frame_rate");
+
+    if (!nh.has_parameter("acquisition_frame_rate"))
+    {
+        nh.declare_parameter<double>("acquisition_frame_rate", 0.0);  // 0.0 = not given
+    }
+
+    nh.get_parameter("acquisition_frame_rate", this->acquisition_frame_rate_);
+    this->acquisition_frame_rate_given_ = (this->acquisition_frame_rate_ > 0.0);
 
     // device link throughput limit
     RCLCPP_DEBUG(LOGGER, "---> device_link_throughput_limit");

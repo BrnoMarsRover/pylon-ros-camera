@@ -65,6 +65,9 @@ public:
     virtual float getTriggerDelay();
     virtual std::string setAcquisitionFrameCount(const int& frameCount);
     virtual int getAcquisitionFrameCount();
+    // Overrides the base template's blaze-only stub - see the definition for why this
+    // duplicates setAcquisitionFrameCount rather than renaming it.
+    virtual std::string setAcquisitionFrameRate(const float& framerate);
     virtual std::string setDeviceLinkThroughputLimitMode(const bool& turnOn);
     virtual int getDeviceLinkThroughputLimitMode();
     virtual std::string setDeviceLinkThroughputLimit(const int& limit);
@@ -639,10 +642,10 @@ int PylonROS2GigEAce2Camera::getAcquisitionFrameCount()
     try
     {
         if ( GenApi::IsAvailable(cam_->AcquisitionFrameRate) )
-        {  
+        {
             return static_cast<int>(cam_->AcquisitionFrameRate.GetValue());
         }
-        else 
+        else
         {
              return -10000; // Not available
         }
@@ -651,6 +654,46 @@ int PylonROS2GigEAce2Camera::getAcquisitionFrameCount()
     catch ( const GenICam::GenericException &e )
     {
         return -20000; // Error
+    }
+}
+
+std::string PylonROS2GigEAce2Camera::setAcquisitionFrameRate(const float& framerate)
+{
+    // The base template implements this as a blaze-only stub returning
+    // "Feature not available except for blaze", so on an ace 2 the correctly named
+    // set_acquisition_frame_rate service did nothing at all - while the MISNAMED
+    // setAcquisitionFrameCount() above quietly did exactly this job, writing
+    // AcquisitionFrameRate and reporting the rate back through getAcquisitionFrameCount().
+    // That is why current_params showed "acquisition_frame_count: 51" on a camera that has
+    // no frame-count feature configured.
+    //
+    // Overriding here rather than renaming setAcquisitionFrameCount: the name is part of
+    // the upstream virtual interface and the service built on it, so changing it would be
+    // a gratuitous API break. The duplication below is deliberate, not an oversight.
+    try
+    {
+        if ( GenApi::IsAvailable(cam_->AcquisitionFrameRate) && GenApi::IsAvailable(cam_->AcquisitionFrameRateEnable) )
+        {
+            // The rate is only honoured while the enable flag is set - writing the value
+            // alone leaves the camera free-running at whatever the sensor and the current
+            // geometry allow.
+            cam_->AcquisitionFrameRateEnable.SetValue(true);
+            cam_->AcquisitionFrameRate.SetValue(framerate);
+
+            RCLCPP_INFO_STREAM(LOGGER_GIGE_ACE2, "Acquisition frame rate set to "
+                    << cam_->AcquisitionFrameRate.GetValue() << " Hz");
+            return "done";
+        }
+        else
+        {
+            RCLCPP_ERROR_STREAM(LOGGER_GIGE_ACE2, "Error while trying to change the acquisition frame rate. The connected Camera not supporting this feature");
+            return "The connected Camera not supporting this feature";
+        }
+    }
+    catch ( const GenICam::GenericException &e )
+    {
+        RCLCPP_ERROR_STREAM(LOGGER_GIGE_ACE2, "An exception while changing the acquisition frame rate occurred:" << e.GetDescription());
+        return e.GetDescription();
     }
 }
 
