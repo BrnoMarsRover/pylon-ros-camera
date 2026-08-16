@@ -393,6 +393,80 @@ bool PylonROS2CameraImpl<CameraTraitT>::startGrabbing(const PylonROS2CameraParam
         }
 
         grab_strategy_ = parameters.grab_strategy_;
+
+        // ------------------------------------------------------------------
+        // Startup geometry: scaling -> ROI -> bandwidth cap.
+        //
+        // This runs HERE, with the camera open but not yet grabbing, because that is the
+        // state Basler requires for Width/Height/Offset writes, and because img_rows_ /
+        // img_cols_ are cached a few lines below - so the new geometry is picked up for
+        // free. Doing it here rather than through service calls after launch means the
+        // very first published frame already has the configured size (no window in which
+        // the image and camera_info disagree), and a respawned node comes back at the
+        // configured resolution instead of whatever the startup user set happens to hold.
+        //
+        // Order matters: scaling changes WidthMax, so it has to precede the ROI, and the
+        // bandwidth cap is sized from the geometry, so it comes last.
+        if (parameters.scaling_factor_given_)
+        {
+            setScalingFactor(static_cast<float>(parameters.scaling_factor_));
+        }
+
+        if (parameters.roi_given_)
+        {
+            sensor_msgs::msg::RegionOfInterest target_roi;
+            target_roi.width = static_cast<uint32_t>(parameters.roi_width_);
+            target_roi.height = static_cast<uint32_t>(parameters.roi_height_);
+            target_roi.x_offset = static_cast<uint32_t>(parameters.roi_offset_x_);
+            target_roi.y_offset = static_cast<uint32_t>(parameters.roi_offset_y_);
+
+            sensor_msgs::msg::RegionOfInterest reached_roi;
+            if (setROI(target_roi, reached_roi))
+            {
+                RCLCPP_INFO_STREAM(LOGGER_BASE, "Startup roi applied: "
+                        << reached_roi.width << "x" << reached_roi.height
+                        << " at offset (" << reached_roi.x_offset << ", "
+                        << reached_roi.y_offset << ")");
+            }
+            else
+            {
+                RCLCPP_WARN_STREAM(LOGGER_BASE, "Failed to apply the startup roi ("
+                        << parameters.roi_width_ << "x" << parameters.roi_height_
+                        << " at offset (" << parameters.roi_offset_x_ << ", "
+                        << parameters.roi_offset_y_ << ")). Keeping the current geometry.");
+            }
+        }
+
+        if (parameters.device_link_throughput_limit_given_)
+        {
+            // The limit is only writable once the mode is On - setDeviceLinkThroughputLimit
+            // silently declines otherwise.
+            setDeviceLinkThroughputLimitMode(true);
+            setDeviceLinkThroughputLimit(parameters.device_link_throughput_limit_);
+
+            // Re-apply the inter-packet delay AFTER the cap. Switching
+            // DeviceLinkThroughputLimitMode on makes the camera DERIVE GevSCPD from the
+            // limit, which silently discards the gige/inter_pkg_delay written when the
+            // camera was opened - measured landing on GevSCPD = 0, i.e. the camera bursts
+            // packets at full line rate. At 94% link utilisation the host then cannot
+            // drain the NIC in time and every few frames arrives short, logged as
+            // "The buffer was incompletely grabbed" with rx_dropped climbing on the
+            // interface. Order therefore matters twice over: geometry -> cap -> pacing.
+            if ( GenApi::IsAvailable(cam_->GevSCPD) )
+            {
+                cam_->GevSCPD.SetValue(parameters.inter_pkg_delay_);
+                RCLCPP_INFO_STREAM(LOGGER_BASE, "Inter-packet delay re-applied after the "
+                        << "throughput cap: GevSCPD = " << parameters.inter_pkg_delay_);
+            }
+        }
+
+        // Normalise the grab state before the single StartGrabbing below. setScalingFactor
+        // leaves acquisition RUNNING and setROI leaves it STOPPED, so without this the
+        // combination that ends up running would make the next StartGrabbing throw
+        // "already grabbing" and abort startup. StopGrabbing on an idle camera is a no-op.
+        cam_->StopGrabbing();
+        // ------------------------------------------------------------------
+
         //cam_->StartGrabbing();
         grabbingStarting();
         user_output_selector_enums_ = detectAndCountNumUserOutputs();
