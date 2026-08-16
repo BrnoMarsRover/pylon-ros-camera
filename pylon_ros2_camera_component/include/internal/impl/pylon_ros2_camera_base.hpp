@@ -2760,6 +2760,135 @@ std::string PylonROS2CameraImpl<CameraTraitT>::setDeviceLinkThroughputLimit(cons
 }
 
 template <typename CameraTraitT>
+std::string PylonROS2CameraImpl<CameraTraitT>::setScalingFactor(const float& value)
+{
+    // Basler PixelBeyond. Scaling shrinks the transmitted image while keeping the full
+    // field of view, so it trades resolution for bandwidth/frame rate without cropping.
+    // Only present on ace 2 Pro and later, hence the IsAvailable guards.
+    //
+    // NOTE the factor is a DIVISOR, matching Basler's own semantics (the camera reports
+    // GetMin() == 1): 1.0 leaves the image at full resolution, 2.0 halves each dimension
+    // (1920x1200 -> 960x600), 2.4 gives 800x500. It is NOT a multiplier.
+    //
+    // Image geometry is only writable while not grabbing, so this stops and restarts
+    // acquisition the same way setROI()/setBinningX() do, and refreshes the cached
+    // image dimensions afterwards - without that the driver would keep publishing with
+    // a stale buffer size.
+    try
+    {
+        if ( !GenApi::IsAvailable(cam_->BslScalingFactor) )
+        {
+            RCLCPP_WARN_STREAM(LOGGER_BASE, "Camera does not support scaling (PixelBeyond). Will keep the current settings.");
+            return "The connected Camera not supporting this feature";
+        }
+
+        cam_->StopGrabbing();
+
+        // Scaling has to be ENABLED for the factor to be writable, and the factor has
+        // to be written back to its minimum to undo scaling - simply clearing the enable
+        // flag leaves the old factor in place, which keeps WidthMax (and therefore the
+        // image) small. So: enable, write the factor, then switch the feature off again
+        // if the factor turned out to be a no-op.
+        if ( GenApi::IsAvailable(cam_->BslScalingEnable) )
+        {
+            cam_->BslScalingEnable.SetValue(true);
+        }
+
+        double factor_to_set = value;
+        const double min_factor = cam_->BslScalingFactor.GetMin();
+        const double max_factor = cam_->BslScalingFactor.GetMax();
+        if ( factor_to_set < min_factor )
+        {
+            if ( value < 1.0 )
+            {
+                RCLCPP_WARN_STREAM(LOGGER_BASE, "Scaling factor is a divisor, not a multiplier: ("
+                        << value << ") is below the minimum of " << min_factor
+                        << ". Use 1.0 for full resolution, 2.0 for half, and so on.");
+            }
+            else
+            {
+                RCLCPP_WARN_STREAM(LOGGER_BASE, "Desired scaling factor (" << value
+                        << ") unreachable! Setting to lower limit: " << min_factor);
+            }
+            factor_to_set = min_factor;
+        }
+        else if ( factor_to_set > max_factor )
+        {
+            RCLCPP_WARN_STREAM(LOGGER_BASE, "Desired scaling factor (" << value
+                    << ") unreachable! Setting to upper limit: " << max_factor);
+            factor_to_set = max_factor;
+        }
+        cam_->BslScalingFactor.SetValue(factor_to_set);
+
+        // Leave the feature switched off when it is doing nothing, so the camera
+        // reports plain unscaled geometry.
+        if ( GenApi::IsAvailable(cam_->BslScalingEnable) && factor_to_set <= min_factor )
+        {
+            cam_->BslScalingEnable.SetValue(false);
+        }
+
+        // Width/Height do NOT follow the scaling factor by themselves - changing the
+        // factor only changes their MAXIMUM. Without this the image keeps whatever size
+        // it had, which is most obvious when disabling scaling: the factor goes back to
+        // 1.0 but the image stays small. Offsets are cleared first for the same reason
+        // setROI() does it, otherwise a leftover offset caps the reachable width.
+        if ( GenApi::IsAvailable(cam_->Width) && GenApi::IsAvailable(cam_->Height) )
+        {
+            if ( GenApi::IsAvailable(cam_->OffsetX) && GenApi::IsAvailable(cam_->OffsetY) )
+            {
+                cam_->OffsetX.SetValue(0);
+                cam_->OffsetY.SetValue(0);
+            }
+            cam_->Width.SetValue(cam_->WidthMax.GetValue());
+            cam_->Height.SetValue(cam_->HeightMax.GetValue());
+        }
+
+        grabbingStarting();
+
+        img_cols_ = static_cast<size_t>(cam_->Width.GetValue());
+        img_rows_ = static_cast<size_t>(cam_->Height.GetValue());
+        img_size_byte_ = img_cols_ * img_rows_ * imagePixelDepth();
+
+        RCLCPP_INFO_STREAM(LOGGER_BASE, "Scaling factor set to " << getScalingFactor()
+                << " -> image is now " << img_cols_ << "x" << img_rows_);
+    }
+    catch ( const GenICam::GenericException &e )
+    {
+        RCLCPP_ERROR_STREAM(LOGGER_BASE, "An exception while changing the scaling factor occurred:" << e.GetDescription());
+        return e.GetDescription();
+    }
+    return "done";
+}
+
+template <typename CameraTraitT>
+float PylonROS2CameraImpl<CameraTraitT>::getScalingFactor()
+{
+    try
+    {
+        if ( GenApi::IsAvailable(cam_->BslScalingFactor) )
+        {
+            // Report 1.0 when the feature exists but is switched off, so callers can
+            // always read the value as "divide the full resolution by this".
+            if ( GenApi::IsAvailable(cam_->BslScalingEnable) && !cam_->BslScalingEnable.GetValue() )
+            {
+                return 1.0;
+            }
+            return static_cast<float>(cam_->BslScalingFactor.GetValue());
+        }
+        else
+        {
+            RCLCPP_ERROR_STREAM(LOGGER_BASE, "Error while trying to get the scaling factor. The connected Camera not supporting this feature");
+            return 1.0;
+        }
+    }
+    catch ( const GenICam::GenericException &e )
+    {
+        RCLCPP_ERROR_STREAM(LOGGER_BASE, "An exception while getting the scaling factor occurred:" << e.GetDescription());
+        return 1.0;
+    }
+}
+
+template <typename CameraTraitT>
 std::string PylonROS2CameraImpl<CameraTraitT>::setBalanceWhiteAuto(const int& mode)
 {
     try

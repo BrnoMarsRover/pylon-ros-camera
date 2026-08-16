@@ -808,10 +808,28 @@ public:
     virtual std::string setDeviceLinkThroughputLimit(const int& limit) = 0;
 
     /**
+     * set the sensor scaling factor (Basler PixelBeyond, ace 2 Pro and later).
+     * Scaling reduces the transmitted image size while KEEPING the full field of
+     * view, unlike a ROI which crops. Useful to trade resolution for frame rate or
+     * bandwidth on a saturated link.
+     * @param value : scaling factor, used as a DIVISOR (Basler semantics, min 1.0).
+     *                1.0 leaves full resolution, 2.0 halves each dimension
+     *                (1920x1200 -> 960x600), 2.4 gives 800x500.
+     * @return error message if an error occurred or done message otherwise.
+     */
+    virtual std::string setScalingFactor(const float& value) = 0;
+
+    /**
+     * get the current sensor scaling factor
+     * @return the scaling factor, or 1.0 if the camera does not support scaling.
+     */
+    virtual float getScalingFactor() = 0;
+
+    /**
      * reset the camera device
      * @return error message if an error occurred or done message otherwise.
      */
-    virtual std::string triggerDeviceReset() = 0; 
+    virtual std::string triggerDeviceReset() = 0;
 
     /**
      * start camera aqcuisition

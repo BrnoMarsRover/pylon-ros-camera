@@ -252,6 +252,10 @@ public:
 
     virtual std::string setDeviceLinkThroughputLimit(const int& limit) override;
 
+    virtual std::string setScalingFactor(const float& value) override;
+
+    virtual float getScalingFactor() override;
+
     virtual std::string triggerDeviceReset() override;  
 
     virtual std::string grabbingStarting() const override;

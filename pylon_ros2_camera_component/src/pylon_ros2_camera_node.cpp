@@ -445,6 +445,9 @@ void PylonROS2CameraNode::initServices()
   
   srv_name = srv_prefix + "set_noise_reduction";
   this->set_noise_reduction_srv_ = this->create_service<SetFloatSrv>(srv_name, std::bind(&PylonROS2CameraNode::setNoiseReductionCallback, this, _1, _2));
+
+  srv_name = srv_prefix + "set_scaling_factor";
+  this->set_scaling_factor_srv_ = this->create_service<SetFloatSrv>(srv_name, std::bind(&PylonROS2CameraNode::setScalingFactorCallback, this, _1, _2));
   
   srv_name = srv_prefix + "set_sharpness_enhancement";
   this->set_sharpness_enhancement_srv_ = this->create_service<SetFloatSrv>(srv_name, std::bind(&PylonROS2CameraNode::setSharpnessEnhancementCallback, this, _1, _2));
@@ -1860,6 +1863,50 @@ std::string PylonROS2CameraNode::setNoiseReduction(const float& value)
   }
   
   return this->pylon_camera_->setNoiseReduction(value);
+}
+
+std::string PylonROS2CameraNode::setScalingFactor(const float& value)
+{
+  if (this->pylon_camera_->isBlaze())
+  {
+    RCLCPP_WARN(LOGGER, "Trying to set the scaling factor: there's no scaling parameter with the blaze camera");
+    return "No scaling parameter with the blaze";
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(this->grab_mutex_);
+  if (!this->pylon_camera_->isReady())
+  {
+    RCLCPP_WARN(LOGGER, "Error in setScalingFactor(): pylon_camera_ is not ready!");
+    return "pylon camera is not ready!";
+  }
+
+  const std::string result = this->pylon_camera_->setScalingFactor(value);
+
+  if (result == "done")
+  {
+    // Scaling changes the image geometry, so the published message has to be
+    // re-described - otherwise subscribers keep receiving a header that claims the
+    // old size while the payload is the new one. This is the same refresh setROI()
+    // does after it touches Width/Height.
+    this->img_raw_msg_.height = this->pylon_camera_->imageRows();
+    this->img_raw_msg_.width = this->pylon_camera_->imageCols();
+    // step = full row length in bytes, imagePixelDepth already contains the channels
+    this->img_raw_msg_.step = this->img_raw_msg_.width * this->pylon_camera_->imagePixelDepth();
+    this->setupSamplingIndices(this->sampling_indices_,
+                               this->pylon_camera_->imageRows(),
+                               this->pylon_camera_->imageCols(),
+                               this->pylon_camera_parameter_set_.downsampling_factor_exposure_search_);
+
+    RCLCPP_INFO_STREAM(LOGGER, "Scaling applied, published image is now "
+            << this->img_raw_msg_.width << "x" << this->img_raw_msg_.height);
+
+    //NOTE(scaling-calibration): camera_info is deliberately NOT rescaled here. The
+    // intrinsics come from the calibration file and are resolution specific, so
+    // anything doing rectification, projection or 3D work needs a calibration that
+    // matches the scaled resolution. Only the image geometry is corrected above.
+  }
+
+  return result;
 }
 
 std::string PylonROS2CameraNode::setSharpnessEnhancement(const float& value)
@@ -3698,6 +3745,24 @@ void PylonROS2CameraNode::setNoiseReductionCallback(const std::shared_ptr<SetFlo
     response->success = true;
   }
   else 
+  {
+    response->success = false;
+    if (response->message == "Node is not writable.")
+    {
+      response->message = "Using this feature requires stopping image grabbing";
+    }
+  }
+}
+
+void PylonROS2CameraNode::setScalingFactorCallback(const std::shared_ptr<SetFloatSrv::Request> request,
+                                                   std::shared_ptr<SetFloatSrv::Response> response)
+{
+  response->message = this->setScalingFactor(request->value);
+  if (response->message == "done")
+  {
+    response->success = true;
+  }
+  else
   {
     response->success = false;
     if (response->message == "Node is not writable.")

@@ -496,6 +496,16 @@ protected:
   std::string setDeviceLinkThroughputLimit(const int& limit);
 
   /**
+   * @brief Method to set the sensor scaling factor (Basler PixelBeyond).
+   * Scaling lowers the transmitted resolution while keeping the full field of view,
+   * so it trades resolution for frame rate / bandwidth without cropping.
+   * @param value : scaling factor, used as a DIVISOR (min 1.0). 1.0 = full
+   *                resolution, 2.0 = half each dimension, 2.4 = 800x500.
+   * @return error message if an error occurred or done message otherwise.
+   */
+  std::string setScalingFactor(const float& value);
+
+  /**
    * @brief Method to reset the camera device
    * @return error message if an error occurred or done message otherwise.
    */
@@ -1107,6 +1117,14 @@ protected:
    */
   void setNoiseReductionCallback(const std::shared_ptr<SetFloatSrv::Request> request,
                                  std::shared_ptr<SetFloatSrv::Response> response);
+
+  /**
+   * @brief Service callback for setting the sensor scaling factor (PixelBeyond).
+   * @param req request
+   * @param res response
+   */
+  void setScalingFactorCallback(const std::shared_ptr<SetFloatSrv::Request> request,
+                                std::shared_ptr<SetFloatSrv::Response> response);
 
   /**
    * @brief Service callback for setting the sharpness enhancement value. 
@@ -1765,6 +1783,7 @@ protected:
   rclcpp::Service<SetIntegerSrv>::SharedPtr set_multi_camera_channel_srv_;
 
   rclcpp::Service<SetFloatSrv>::SharedPtr set_noise_reduction_srv_;
+  rclcpp::Service<SetFloatSrv>::SharedPtr set_scaling_factor_srv_;
   rclcpp::Service<SetFloatSrv>::SharedPtr set_sharpness_enhancement_srv_;
   rclcpp::Service<SetFloatSrv>::SharedPtr set_trigger_delay_srv_;
   rclcpp::Service<SetFloatSrv>::SharedPtr set_line_debouncer_time_srv_;
